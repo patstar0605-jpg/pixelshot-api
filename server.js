@@ -18,7 +18,10 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const supabase = createClient(
+  process.env.SUPABASE_URL ?? 'https://ghkmaibdovixhqpnlrao.supabase.co',
+  process.env.SUPABASE_SERVICE_KEY ?? 'sb_secret_EqyK7N7JbsNN_YJV01-C_A_qbXrHtSs'
+);
 const s3 = new S3Client({
   region: process.env.AWS_REGION,
   credentials: { accessKeyId: process.env.AWS_ACCESS_KEY, secretAccessKey: process.env.AWS_SECRET_KEY }
