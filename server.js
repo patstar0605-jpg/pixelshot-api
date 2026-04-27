@@ -73,12 +73,11 @@ app.post('/api/checkout', async (req, res) => {
       }],
       mode: 'payment',
       customer_email: email,
-      metadata: { jobId, plan, style },
-      success_url: `https://pixelshot-frontend.vercel.app/upload.html?jobId={CHECKOUT_SESSION_ID}`,
+      metadata: { jobId, plan },
+      success_url: `https://pixelshot-frontend.vercel.app/upload.html?jobId=${jobId}`,
       cancel_url: `https://pixelshot-frontend.vercel.app/index.html`,
     });
-    await supabase.from('jobs').update({ stripe_session_id: session.id }).eq('id', jobId);
-    res.json({ url: session.url });
+    res.json({ url: session.url, jobId });
   } catch (err) {
     console.error('Checkout error:', err);
     res.status(500).json({ error: 'Failed to create checkout session' });
@@ -106,7 +105,7 @@ app.post('/webhook', async (req, res) => {
 app.post('/api/upload/:jobId', upload.array('files', 20), async (req, res) => {
   const { jobId } = req.params;
   const { style } = req.body;
-  const { data: job } = await supabase.from('jobs').select('*').eq('stripe_session_id', jobId).single();
+  const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
   if (!job || job.status !== 'paid') return res.status(403).json({ error: 'Job not found or not paid' });
   if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
   if (req.files.length < 10) return res.status(400).json({ error: 'Please upload at least 10 photos' });
@@ -215,7 +214,7 @@ app.post('/api/images-callback/:jobId', async (req, res) => {
 app.get('/api/results/:jobId', async (req, res) => {
   const { data: job } = await supabase
     .from('jobs').select('id,status,result_urls,completed_at,plan,style')
-    .eq('stripe_session_id', req.params.jobId).single();
+    .eq('id', req.params.jobId).single();
   if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json({ ...job, images: job.result_urls });
 });
