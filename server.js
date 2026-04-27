@@ -28,7 +28,13 @@ const s3 = new S3Client({
 });
 const resend = new Resend(process.env.SMTP_PASS);
 
-app.use(cors({ origin: process.env.FRONTEND_URL }));
+app.use(cors({
+  origin: [
+    'https://pixelshot-frontend.vercel.app',
+    'http://localhost:3000',
+    'http://localhost:5173',
+  ]
+}));
 app.use('/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 
@@ -68,9 +74,10 @@ app.post('/api/checkout', async (req, res) => {
       mode: 'payment',
       customer_email: email,
       metadata: { jobId, plan, style },
-      success_url: `${process.env.FRONTEND_URL}/upload.html?job=${jobId}`,
-      cancel_url: `${process.env.FRONTEND_URL}/#pricing`,
+      success_url: `https://pixelshot-frontend.vercel.app/upload.html?jobId={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://pixelshot-frontend.vercel.app/index.html`,
     });
+    await supabase.from('jobs').update({ stripe_session_id: session.id }).eq('id', jobId);
     res.json({ url: session.url });
   } catch (err) {
     console.error('Checkout error:', err);
@@ -99,7 +106,7 @@ app.post('/webhook', async (req, res) => {
 app.post('/api/upload/:jobId', upload.array('files', 20), async (req, res) => {
   const { jobId } = req.params;
   const { style } = req.body;
-  const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
+  const { data: job } = await supabase.from('jobs').select('*').eq('stripe_session_id', jobId).single();
   if (!job || job.status !== 'paid') return res.status(403).json({ error: 'Job not found or not paid' });
   if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
   if (req.files.length < 10) return res.status(400).json({ error: 'Please upload at least 10 photos' });
@@ -208,9 +215,9 @@ app.post('/api/images-callback/:jobId', async (req, res) => {
 app.get('/api/results/:jobId', async (req, res) => {
   const { data: job } = await supabase
     .from('jobs').select('id,status,result_urls,completed_at,plan,style')
-    .eq('id', req.params.jobId).single();
+    .eq('stripe_session_id', req.params.jobId).single();
   if (!job) return res.status(404).json({ error: 'Job not found' });
-  res.json(job);
+  res.json({ ...job, images: job.result_urls });
 });
 
 // 8. EMAIL
