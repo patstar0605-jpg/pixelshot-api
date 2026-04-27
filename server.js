@@ -103,7 +103,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // 3. UPLOAD PHOTOS
-app.post('/api/upload/:jobId', upload.array('files', 20), async (req, res) => {
+app.post('/api/upload/:jobId', upload.array('photos', 20), async (req, res) => {
   const { jobId } = req.params;
   const { style } = req.body;
 
