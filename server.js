@@ -106,11 +106,16 @@ app.post('/webhook', async (req, res) => {
 app.post('/api/upload/:jobId', upload.array('files', 20), async (req, res) => {
   const { jobId } = req.params;
   const { style } = req.body;
-  const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
-  if (!job || job.status !== 'paid') return res.status(403).json({ error: 'Job not found or not paid' });
-  if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
-  if (req.files.length < 10) return res.status(400).json({ error: 'Please upload at least 10 photos' });
+
+  let step = 'db-lookup';
   try {
+    const { data: job, error: dbErr } = await supabase.from('jobs').select('*').eq('id', jobId).single();
+    if (dbErr) throw Object.assign(new Error(dbErr.message), { code: dbErr.code });
+    if (!job || job.status !== 'paid') return res.status(403).json({ error: 'Job not found or not paid', step });
+    if (!req.files?.length) return res.status(400).json({ error: 'No files uploaded' });
+    if (req.files.length < 10) return res.status(400).json({ error: 'Please upload at least 10 photos' });
+
+    step = 's3-upload';
     const uploadPromises = req.files.map(async (file, i) => {
       const key = `temp/${jobId}/photo-${i}.${file.mimetype.split('/')[1]}`;
       await s3.send(new PutObjectCommand({
@@ -120,15 +125,24 @@ app.post('/api/upload/:jobId', upload.array('files', 20), async (req, res) => {
       return `https://${process.env.S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
     });
     const photoUrls = await Promise.all(uploadPromises);
-    await supabase.from('jobs').update({
+
+    step = 'db-update';
+    const { error: updateErr } = await supabase.from('jobs').update({
       status: 'processing', style: style || job.style,
       photo_urls: photoUrls, uploaded_at: new Date().toISOString()
     }).eq('id', jobId);
+    if (updateErr) throw Object.assign(new Error(updateErr.message), { code: updateErr.code });
+
+    step = 'astria-trigger';
     triggerAIGeneration(jobId, photoUrls, style || job.style, job.plan, job.email);
+
     res.json({ success: true, message: 'Photos uploaded! Generation started. Check your email in 20-30 minutes.' });
   } catch (err) {
-    console.error('Upload error:', err);
-    res.status(500).json({ error: 'Upload failed' });
+    console.error(`Upload error at step [${step}] for job ${jobId}:`);
+    console.error('  message:', err.message);
+    console.error('  code:   ', err.code ?? 'n/a');
+    console.error('  stack:  ', err.stack);
+    res.status(500).json({ error: err.message, step });
   }
 });
 
