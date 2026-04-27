@@ -26,7 +26,8 @@ const s3 = new S3Client({
   region: process.env.AWS_REGION,
   credentials: { accessKeyId: process.env.AWS_ACCESS_KEY, secretAccessKey: process.env.AWS_SECRET_KEY }
 });
-const resend = new Resend(process.env.SMTP_PASS);
+const resend = process.env.SMTP_PASS ? new Resend(process.env.SMTP_PASS) : null;
+if (!resend) console.warn('⚠️ Resend disabled - SMTP_PASS not set');
 
 app.use(cors({
   origin: [
@@ -225,22 +226,26 @@ async function sendResultsEmail(email, jobId, previewUrls) {
   const previewImgs = previewUrls.map(url =>
     `<img src="${url}" style="width:120px;height:160px;object-fit:cover;border-radius:8px;margin-right:8px">`
   ).join('');
-  await resend.emails.send({
-    from: 'PixelShot <noreply@pixelshot.ai>',
-    to: email,
-    subject: '✦ Your AI headshots are ready!',
-    html: `
-      <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px">
-        <h1 style="font-size:1.8rem;color:#1A1A1A;margin-bottom:8px">Your headshots are ready ✦</h1>
-        <p style="color:#7A7468;line-height:1.6">Your AI-generated professional headshots have been created and are ready to download.</p>
-        <div style="margin:24px 0;display:flex;gap:8px">${previewImgs}</div>
-        <a href="${resultsUrl}" style="display:inline-block;background:#C9A84C;color:#111;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600">
-          View & Download My Headshots →
-        </a>
-        <p style="margin-top:24px;color:#aaa;font-size:0.8rem">You own full commercial rights to all images.</p>
-      </div>
-    `,
-  });
+  if (resend) {
+    await resend.emails.send({
+      from: 'PixelShot <noreply@pixelshot.ai>',
+      to: email,
+      subject: '✦ Your AI headshots are ready!',
+      html: `
+        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px">
+          <h1 style="font-size:1.8rem;color:#1A1A1A;margin-bottom:8px">Your headshots are ready ✦</h1>
+          <p style="color:#7A7468;line-height:1.6">Your AI-generated professional headshots have been created and are ready to download.</p>
+          <div style="margin:24px 0;display:flex;gap:8px">${previewImgs}</div>
+          <a href="${resultsUrl}" style="display:inline-block;background:#C9A84C;color:#111;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600">
+            View & Download My Headshots →
+          </a>
+          <p style="margin-top:24px;color:#aaa;font-size:0.8rem">You own full commercial rights to all images.</p>
+        </div>
+      `,
+    });
+  } else {
+    console.log('Skipping email - Resend not configured');
+  }
 }
 
 const PORT = process.env.PORT || 3001;
