@@ -9,7 +9,7 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import crypto from 'crypto';
 import cors from 'cors';
 import 'dotenv/config';
@@ -26,10 +26,7 @@ const s3 = new S3Client({
   region: process.env.AWS_REGION,
   credentials: { accessKeyId: process.env.AWS_ACCESS_KEY, secretAccessKey: process.env.AWS_SECRET_KEY }
 });
-const mailer = nodemailer.createTransport({
-  host: process.env.SMTP_HOST, port: 587,
-  auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-});
+const resend = new Resend(process.env.SMTP_PASS);
 
 app.use(cors({ origin: process.env.FRONTEND_URL }));
 app.use('/webhook', express.raw({ type: 'application/json' }));
@@ -222,8 +219,8 @@ async function sendResultsEmail(email, jobId, previewUrls) {
   const previewImgs = previewUrls.map(url =>
     `<img src="${url}" style="width:120px;height:160px;object-fit:cover;border-radius:8px;margin-right:8px">`
   ).join('');
-  await mailer.sendMail({
-    from: `"PixelShot" <noreply@pixelshot.ai>`,
+  await resend.emails.send({
+    from: 'PixelShot <noreply@pixelshot.ai>',
     to: email,
     subject: '✦ Your AI headshots are ready!',
     html: `
