@@ -58,10 +58,13 @@ app.post('/api/checkout', async (req, res) => {
     const { plan, email, style } = req.body;
     if (!PLANS[plan]) return res.status(400).json({ error: 'Invalid plan' });
     const jobId = crypto.randomUUID();
-    await supabase.from('jobs').insert({
-      id: jobId, email, plan, style, status: 'pending_payment',
-      created_at: new Date().toISOString()
-    });
+    const { error: dbError } = await supabase
+      .from('jobs')
+      .insert({ id: jobId, email, plan, style, status: 'pending_payment', created_at: new Date().toISOString() });
+    if (dbError) {
+      console.error('Supabase insert error:', dbError);
+      return res.status(500).json({ error: 'Failed to create job', detail: dbError.message });
+    }
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [{
