@@ -98,9 +98,15 @@ app.post('/webhook', async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
   if (event.type === 'checkout.session.completed') {
-    const { jobId } = event.data.object.metadata;
-    await supabase.from('jobs').update({ status: 'paid' }).eq('id', jobId);
-    console.log(`Payment confirmed for job ${jobId}`);
+    const session = event.data.object;
+    const { jobId } = session.metadata;
+    const email = session.customer_details?.email || session.customer_email;
+    const { error } = await supabase
+      .from('jobs')
+      .update({ status: 'paid', email })
+      .eq('id', jobId);
+    if (error) console.error('Webhook update failed:', error);
+    else console.log(`Payment confirmed for job ${jobId} (${email})`);
   }
   res.json({ received: true });
 });
