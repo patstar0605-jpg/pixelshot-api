@@ -251,27 +251,32 @@ app.get('/api/results/:jobId', async (req, res) => {
 
 // 8. EMAIL
 async function sendResultsEmail(email, jobId, previewUrls) {
-  const resultsUrl = `${process.env.FRONTEND_URL}/results.html?job=${jobId}`;
+  const resultsUrl = `https://pixelshot-frontend.vercel.app/results.html?jobId=${jobId}`;
   const previewImgs = previewUrls.map(url =>
     `<img src="${url}" style="width:120px;height:160px;object-fit:cover;border-radius:8px;margin-right:8px">`
   ).join('');
   if (resend) {
-    await resend.emails.send({
-      from: 'PixelShot <noreply@pixelshot.ai>',
-      to: email,
-      subject: '✦ Your AI headshots are ready!',
-      html: `
-        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px">
-          <h1 style="font-size:1.8rem;color:#1A1A1A;margin-bottom:8px">Your headshots are ready ✦</h1>
-          <p style="color:#7A7468;line-height:1.6">Your AI-generated professional headshots have been created and are ready to download.</p>
-          <div style="margin:24px 0;display:flex;gap:8px">${previewImgs}</div>
-          <a href="${resultsUrl}" style="display:inline-block;background:#C9A84C;color:#111;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600">
-            View & Download My Headshots →
-          </a>
-          <p style="margin-top:24px;color:#aaa;font-size:0.8rem">You own full commercial rights to all images.</p>
-        </div>
-      `,
-    });
+    try {
+      await resend.emails.send({
+        from: 'PixelShot <onboarding@resend.dev>',
+        to: email,
+        subject: 'Your PixelShot headshots are ready! 🎉',
+        html: `
+          <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:32px">
+            <h1 style="font-size:1.8rem;color:#1A1A1A;margin-bottom:8px">Your headshots are ready ✦</h1>
+            <p style="color:#7A7468;line-height:1.6">Your AI-generated professional headshots have been created and are ready to download.</p>
+            <div style="margin:24px 0;display:flex;gap:8px">${previewImgs}</div>
+            <a href="${resultsUrl}" style="display:inline-block;background:#C9A84C;color:#111;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:600">
+              View & Download My Headshots →
+            </a>
+            <p style="margin-top:24px;color:#aaa;font-size:0.8rem">You own full commercial rights to all images.</p>
+          </div>
+        `,
+      });
+      console.log(`Completion email sent to ${email} for job ${jobId}`);
+    } catch (err) {
+      console.error(`Failed to send completion email to ${email} for job ${jobId}:`, err.message);
+    }
   } else {
     console.log('Skipping email - Resend not configured');
   }
