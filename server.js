@@ -5,7 +5,7 @@ import express from 'express';
 import multer from 'multer';
 import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
@@ -159,12 +159,18 @@ app.post('/api/upload/:jobId', upload.array('photos', 20), async (req, res) => {
 async function triggerAIGeneration(jobId, photoUrls, style, plan, email) {
   console.log(`Starting AI generation for job ${jobId}`);
   try {
+    const signedUrls = await Promise.all(
+      photoUrls.map(url => {
+        const key = url.split('.amazonaws.com/')[1];
+        return getSignedUrl(s3, new GetObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }), { expiresIn: 86400 });
+      })
+    );
     const tuneForm = new FormData();
     tuneForm.append('tune[title]', `pixelshot-${jobId}`);
     tuneForm.append('tune[name]', 'person');
     tuneForm.append('tune[base_tune_id]', '690204');
     tuneForm.append('tune[callback]', `${process.env.API_URL}/api/astria-callback/${jobId}`);
-    photoUrls.forEach(url => tuneForm.append('tune[image_urls][]', url));
+    signedUrls.forEach(url => tuneForm.append('tune[image_urls][]', url));
     const tuneRes = await fetch('https://api.astria.ai/tunes', {
       method: 'POST',
       headers: { Authorization: `Bearer ${process.env.ASTRIA_API_KEY}` },
