@@ -46,11 +46,16 @@ const PLANS = {
 };
 
 const STYLE_PROMPTS = {
-  professional: "professional corporate headshot, wearing a dark suit and tie, neutral grey background, soft studio lighting, sharp focus, 4K",
-  casual:       "smart casual headshot, wearing a clean shirt, modern office background, natural light, friendly expression, 4K",
-  creative:     "creative professional headshot, artistic composition, dynamic urban background, confident pose, 4K",
-  executive:    "executive C-suite headshot, power pose, authoritative look, premium suit, minimalist background, 4K"
+  professional:  "professional corporate headshot, wearing a dark suit and tie, neutral grey background, soft studio lighting, sharp focus, 4K",
+  casual:        "smart casual headshot, wearing a clean shirt, modern office background, natural light, friendly expression, 4K",
+  creative:      "creative professional headshot, artistic composition, dynamic urban background, confident pose, 4K",
+  executive:     "executive C-suite headshot, power pose, authoritative look, premium suit, minimalist background, 4K",
+  classy:        "classy elegant headshot, tailored blazer, upscale interior background, sophisticated studio lighting, polished refined look, 4K",
+  everyday:      "everyday natural headshot, relaxed smart-casual outfit, warm indoor setting, approachable friendly smile, soft natural light, 4K",
+  highperformer: "high-performer headshot, sharp modern business attire, sleek contemporary office, confident commanding expression, dynamic lighting, 4K",
 };
+
+const DEFAULT_STYLES = ['classy', 'casual', 'everyday', 'highperformer'];
 
 // 1. CREATE STRIPE CHECKOUT SESSION
 app.post('/api/checkout', async (req, res) => {
@@ -192,49 +197,89 @@ app.post('/api/astria-callback/:jobId', async (req, res) => {
   res.json({ received: true });
   const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
   if (!job) return;
-  const plan = PLANS[job.plan];
-  const promptText = STYLE_PROMPTS[job.style] || STYLE_PROMPTS.professional;
-  const shotsPerStyle = plan.shots / plan.styles;
   try {
+    const promptIds = await generatePrompts(job);
+    await supabase.from('jobs').update({ astria_prompt_id: promptIds[0] }).eq('id', jobId);
+  } catch (err) {
+    console.error('Prompt generation error:', err);
+  }
+});
+
+// 5a. MANUAL TRIGGER — re-run prompts for an already-trained tune
+app.post('/api/trigger-prompts/:jobId', async (req, res) => {
+  const { data: job } = await supabase.from('jobs').select('*').eq('id', req.params.jobId).single();
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (!job.astria_tune_id) return res.status(400).json({ error: 'No tune ID — training not complete' });
+  try {
+    const promptIds = await generatePrompts(job);
+    await supabase.from('jobs').update({ astria_prompt_id: promptIds[0] }).eq('id', job.id);
+    res.json({ success: true, prompts: promptIds });
+  } catch (err) {
+    console.error('Manual trigger error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+async function generatePrompts(job) {
+  const plan = PLANS[job.plan];
+  const shotsPerStyle = plan.shots / plan.styles;
+  const styles = plan.styles === 1
+    ? [job.style || DEFAULT_STYLES[0]]
+    : DEFAULT_STYLES.slice(0, plan.styles);
+
+  console.log(`Generating ${styles.length} prompt(s) for job ${job.id}: ${styles.join(', ')}`);
+  const promptIds = [];
+  for (const style of styles) {
+    const promptText = STYLE_PROMPTS[style] || STYLE_PROMPTS.professional;
     const promptForm = new FormData();
     promptForm.append('prompt[text]', `<lora:${job.astria_tune_id}:1> ${promptText}`);
     promptForm.append('prompt[num_images]', shotsPerStyle.toString());
     promptForm.append('prompt[super_resolution]', 'true');
     promptForm.append('prompt[face_swap]', 'true');
-    promptForm.append('prompt[callback]', `${process.env.API_URL}/api/images-callback/${jobId}`);
+    promptForm.append('prompt[callback]', `${process.env.API_URL}/api/images-callback/${job.id}`);
     const promptRes = await fetch(`https://api.astria.ai/tunes/${job.astria_tune_id}/prompts`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${process.env.ASTRIA_API_KEY}` },
       body: promptForm,
     });
     const promptData = await promptRes.json();
-    console.log(`Generation started for job ${jobId}: prompt ${promptData.id}`);
-    await supabase.from('jobs').update({ astria_prompt_id: promptData.id }).eq('id', jobId);
-  } catch (err) {
-    console.error('Prompt generation error:', err);
+    if (!promptData.id) throw new Error(`Astria prompt failed (${style}): ${JSON.stringify(promptData)}`);
+    console.log(`Prompt ${promptData.id} queued for job ${job.id} (style: ${style}, shots: ${shotsPerStyle})`);
+    promptIds.push(promptData.id);
   }
-});
+  return promptIds;
+}
 
 // 6. IMAGES CALLBACK
 app.post('/api/images-callback/:jobId', async (req, res) => {
   const { jobId } = req.params;
   res.json({ received: true });
-  const imageUrls = req.body?.images || [];
-  if (!imageUrls.length) return;
+  const newImages = req.body?.images || [];
+  if (!newImages.length) return;
   const { data: job } = await supabase.from('jobs').select('*').eq('id', jobId).single();
   if (!job) return;
   try {
+    const plan = PLANS[job.plan];
+    const accumulated = [...(job.result_urls || []), ...newImages];
+    const expectedTotal = plan.shots;
+    const isComplete = accumulated.length >= expectedTotal;
+
     await supabase.from('jobs').update({
-      status: 'complete', result_urls: imageUrls,
-      completed_at: new Date().toISOString()
+      result_urls: accumulated,
+      ...(isComplete && { status: 'complete', completed_at: new Date().toISOString() })
     }).eq('id', jobId);
-    await sendResultsEmail(job.email, jobId, imageUrls.slice(0, 3));
-    const deletePromises = (job.photo_urls || []).map(url => {
-      const key = url.split('.amazonaws.com/')[1];
-      return s3.send(new DeleteObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }));
-    });
-    await Promise.all(deletePromises);
-    console.log(`Job ${jobId} complete! ${imageUrls.length} images delivered to ${job.email}`);
+
+    console.log(`Job ${jobId}: ${accumulated.length}/${expectedTotal} images received`);
+
+    if (isComplete) {
+      await sendResultsEmail(job.email, jobId, accumulated.slice(0, 3));
+      const deletePromises = (job.photo_urls || []).map(url => {
+        const key = url.split('.amazonaws.com/')[1];
+        return s3.send(new DeleteObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }));
+      });
+      await Promise.all(deletePromises);
+      console.log(`Job ${jobId} complete! ${accumulated.length} images delivered to ${job.email}`);
+    }
   } catch (err) {
     console.error('Completion error:', err);
   }
