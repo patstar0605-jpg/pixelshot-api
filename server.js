@@ -220,6 +220,8 @@ app.post('/api/trigger-prompts/:jobId', async (req, res) => {
   }
 });
 
+const MAX_IMAGES_PER_PROMPT = 8;
+
 async function generatePrompts(job) {
   const plan = PLANS[job.plan];
   const shotsPerStyle = plan.shots / plan.styles;
@@ -227,25 +229,30 @@ async function generatePrompts(job) {
     ? [job.style || DEFAULT_STYLES[0]]
     : DEFAULT_STYLES.slice(0, plan.styles);
 
-  console.log(`Generating ${styles.length} prompt(s) for job ${job.id}: ${styles.join(', ')}`);
+  console.log(`Generating prompts for job ${job.id}: ${styles.join(', ')}, ${shotsPerStyle} shots/style`);
   const promptIds = [];
   for (const style of styles) {
     const promptText = STYLE_PROMPTS[style] || STYLE_PROMPTS.professional;
-    const promptForm = new FormData();
-    promptForm.append('prompt[text]', `<lora:${job.astria_tune_id}:1> ${promptText}`);
-    promptForm.append('prompt[num_images]', shotsPerStyle.toString());
-    promptForm.append('prompt[super_resolution]', 'true');
-    promptForm.append('prompt[face_swap]', 'true');
-    promptForm.append('prompt[callback]', `${process.env.API_URL}/api/images-callback/${job.id}`);
-    const promptRes = await fetch(`https://api.astria.ai/tunes/${job.astria_tune_id}/prompts`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${process.env.ASTRIA_API_KEY}` },
-      body: promptForm,
-    });
-    const promptData = await promptRes.json();
-    if (!promptData.id) throw new Error(`Astria prompt failed (${style}): ${JSON.stringify(promptData)}`);
-    console.log(`Prompt ${promptData.id} queued for job ${job.id} (style: ${style}, shots: ${shotsPerStyle})`);
-    promptIds.push(promptData.id);
+    let remaining = shotsPerStyle;
+    while (remaining > 0) {
+      const batchSize = Math.min(remaining, MAX_IMAGES_PER_PROMPT);
+      const promptForm = new FormData();
+      promptForm.append('prompt[text]', `sks person ${promptText}`);
+      promptForm.append('prompt[num_images]', batchSize.toString());
+      promptForm.append('prompt[super_resolution]', 'true');
+      promptForm.append('prompt[face_swap]', 'true');
+      promptForm.append('prompt[callback]', `${process.env.API_URL}/api/images-callback/${job.id}`);
+      const promptRes = await fetch(`https://api.astria.ai/tunes/${job.astria_tune_id}/prompts`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.ASTRIA_API_KEY}` },
+        body: promptForm,
+      });
+      const promptData = await promptRes.json();
+      if (!promptData.id) throw new Error(`Astria prompt failed (${style}): ${JSON.stringify(promptData)}`);
+      console.log(`Prompt ${promptData.id} queued for job ${job.id} (style: ${style}, shots: ${batchSize})`);
+      promptIds.push(promptData.id);
+      remaining -= batchSize;
+    }
   }
   return promptIds;
 }
